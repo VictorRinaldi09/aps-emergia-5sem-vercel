@@ -180,4 +180,4 @@ def painel_admin():
     
 if __name__ == '__main__':
     # O debug local continua funcionando ao rodar python main.py
-    app.run(debug=True)
+    app.run()

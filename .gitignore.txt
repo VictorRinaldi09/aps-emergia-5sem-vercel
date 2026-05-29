@@ -19,3 +19,6 @@ desktop.ini
 
 # Logs (Não envie seus logs de auditoria locais!)
 *.log
+
+arq.env
+*.env

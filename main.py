@@ -6,7 +6,7 @@ import sys
 import os
 from datetime import datetime
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder="app/templates", static_folder="app/static")
 
 # Configuração do arquivo de log adaptada para Serverless (Vercel)
 # Em vez de salvar em arquivo físico (que some na Vercel), os logs vão para o painel do Vercel Logs

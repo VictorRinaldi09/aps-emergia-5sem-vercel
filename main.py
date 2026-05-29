@@ -6,10 +6,11 @@ import sys
 import os
 from datetime import datetime
 
+# Inicialização do Flask apontando para a pasta 'app' onde estão os templates e estáticos
 app = Flask(__name__, template_folder="app/templates", static_folder="app/static")
 
-# Configuração do arquivo de log adaptada para Serverless (Vercel)
-# Em vez de salvar em arquivo físico (que some na Vercel), os logs vão para o painel do Vercel Logs
+# Configuração de Logs adaptada para Serverless (Vercel)
+# Em vez de salvar em arquivo físico, os logs vão direto para o painel de Runtime Logs da Vercel
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -17,10 +18,20 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 
-# CONFIGURAÇÃO DO BANCO
+# CONFIGURAÇÃO DO BANCO DE DADOS
 DATABASE_URL = os.getenv('DATABASE_URL')
 if DATABASE_URL:
-    # Ajuste automático caso a string comece com postgres:// (comum em algumas nuvens) ou mysql://
+    # Se a URL começar com mysql://, força o uso do mysql+pymysql exigido no Linux da Vercel
+    if DATABASE_URL.startswith('mysql://'):
+        DATABASE_URL = DATABASE_URL.replace('mysql://', 'mysql+pymysql://', 1)
+    
+    # Garante que o parâmetro de SSL obrigatório da Aiven esteja na URL
+    if 'ssl_mode=' not in DATABASE_URL:
+        if '?' in DATABASE_URL:
+            DATABASE_URL += '&ssl_mode=REQUIRED'
+        else:
+            DATABASE_URL += '?ssl_mode=REQUIRED'
+            
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 else:
     # Fallback local para quando você estiver testando na sua máquina
@@ -29,10 +40,14 @@ else:
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'uma_chave_aleatoria_super_secreta_da_aps')
 
-db = SQLAlchemy(app)
-bcrypt = Bcrypt(app)
+# Inicialização segura das extensões do Flask (Padrão de Fábrica para Nuvem)
+db = SQLAlchemy()
+bcrypt = Bcrypt()
 
-# DEFINIÇÃO DAS TABELAS
+db.init_app(app)
+bcrypt.init_app(app)
+
+# DEFINIÇÃO DOS MODELOS / TABELAS
 class Usuario(db.Model):
     __tablename__ = 'usuarios'
     id = db.Column(db.Integer, primary_key=True)
@@ -122,7 +137,7 @@ def calculadora():
         moto_motor = float(request.form.get('moto_motor') or 0)
         moto_energia = float(request.form.get('moto_energia') or 0)
 
-        # Busca os fatores do banco no Aiven
+        # Busca os fatores científicos populados no MySQL da Aiven
         f_bateria = FatorEmergia.query.filter_by(material_energia="Bateria de Íon-Lítio").first().transformidade
         f_motor = FatorEmergia.query.filter_by(material_energia="Cobre (Motor)").first().transformidade
         f_energia = FatorEmergia.query.filter_by(material_energia="Eletricidade (Rede)").first().transformidade
@@ -179,5 +194,5 @@ def painel_admin():
 
     
 if __name__ == '__main__':
-    # O debug local continua funcionando ao rodar python main.py
+    # O app roda localmente com suporte a recarregamento automático (debug)
     app.run()

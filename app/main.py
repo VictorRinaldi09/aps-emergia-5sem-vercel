@@ -1,32 +1,38 @@
-from flask import Flask, render_template, request, redirect, url_for, session,flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 import logging
+import sys
+import os
 from datetime import datetime
 
 app = Flask(__name__)
 
-#Configuração do arquivo de log
+# Configuração do arquivo de log adaptada para Serverless (Vercel)
+# Em vez de salvar em arquivo físico (que some na Vercel), os logs vão para o painel do Vercel Logs
 logging.basicConfig(
-    filename='auditoria.log',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 
 # CONFIGURAÇÃO DO BANCO
-import os
 DATABASE_URL = os.getenv('DATABASE_URL')
 if DATABASE_URL:
+    # Ajuste automático caso a string comece com postgres:// (comum em algumas nuvens) ou mysql://
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 else:
+    # Fallback local para quando você estiver testando na sua máquina
     app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://root:@localhost/calculadora_emergia'
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'uma_chave_aleatoria_super_secreta_da_aps')
 
 db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
-# DEFINIÇÃO DA TABELA (Precisa estar aqui para o criar_admin.py funcionar)
+# DEFINIÇÃO DAS TABELAS
 class Usuario(db.Model):
     __tablename__ = 'usuarios'
     id = db.Column(db.Integer, primary_key=True)
@@ -50,13 +56,10 @@ class LogAcesso(db.Model):
     evento = db.Column(db.String(255), nullable=False)
     status = db.Column(db.String(50), nullable=False)
 
-app.config['SECRET_KEY'] = 'uma_chave_aleatoria'
-
-#NOVAS ROTAS
+# ROTAS DO SISTEMA
 
 @app.route('/')
 def home():
-    #Página pública que explica sobre emergia
     return render_template('home.html')
 
 
@@ -80,6 +83,7 @@ def login_page():
             
     return render_template('acesso.html', tipo_erro='login')
 
+
 @app.route('/cadastro', methods=['POST'])
 def cadastro():
     nome = request.form.get('nome')
@@ -89,7 +93,6 @@ def cadastro():
     usuario_existente = Usuario.query.filter_by(email=email).first()
     if usuario_existente:
         flash('Este endereço de e-mail já está registrado!')
-        # Devolve para a mesma página sinalizando que o erro foi na aba de cadastro
         return render_template('acesso.html', tipo_erro='cadastro')
 
     hash_senha = bcrypt.generate_password_hash(senha).decode('utf-8')
@@ -105,29 +108,26 @@ def cadastro():
 
 @app.route('/calculadora', methods=['GET', 'POST'])
 def calculadora():
-    #Verifica se o usuario esta logado antes de mostrar a calculadora
     if 'usuario_id' not in session:
         return redirect(url_for('login_page'))
 
     resultados = None
 
     if request.method == 'POST':
-        # Coleta de dados - Bicicleta Elétrica
         bike_bateria = float(request.form.get('bike_bateria') or 0)
         bike_motor = float(request.form.get('bike_motor') or 0)
         bike_energia = float(request.form.get('bike_energia') or 0)
 
-        # Coleta de dados - Motocicleta Elétrica
         moto_bateria = float(request.form.get('moto_bateria') or 0)
         moto_motor = float(request.form.get('moto_motor') or 0)
         moto_energia = float(request.form.get('moto_energia') or 0)
 
-        # Busca os fatores científicos diretamente do MySQL
+        # Busca os fatores do banco no Aiven
         f_bateria = FatorEmergia.query.filter_by(material_energia="Bateria de Íon-Lítio").first().transformidade
         f_motor = FatorEmergia.query.filter_by(material_energia="Cobre (Motor)").first().transformidade
         f_energia = FatorEmergia.query.filter_by(material_energia="Eletricidade (Rede)").first().transformidade
 
-        # Cálculos de Emergia - Bike (Convertendo massa para gramas se inserido em kg)
+        # Cálculos de Emergia - Bike
         emergia_bike_bat = (bike_bateria * 1000) * f_bateria
         emergia_bike_mot = (bike_motor * 1000) * f_motor
         emergia_bike_eng = bike_energia * f_energia
@@ -139,7 +139,6 @@ def calculadora():
         emergia_moto_eng = moto_energia * f_energia
         total_moto = emergia_moto_bat + emergia_moto_mot + emergia_moto_eng
 
-        # Organiza os resultados em formato científico/legível
         resultados = {
             'bike': {
                 'bateria': f"{emergia_bike_bat:.2e}",
@@ -160,7 +159,6 @@ def calculadora():
     return render_template('calculadora.html', resultados=resultados)
 
 
-
 @app.route('/logout')
 def logout():
     session.clear()
@@ -169,21 +167,17 @@ def logout():
 
 @app.route('/admin')
 def painel_admin():
-    #So entra se estiver logado e for admin
     if 'usuario_id' not in session or session.get('perfil') != 'admin':
-        #LOG DE VIOLAÇÃO DE ACESSO
         user_tentativa = session.get('nome_usuario', 'Anônimo')
         logging.error(f'ACESSO NEGADO: Usuário "{user_tentativa}" tentou entrar no /admin sem permissão.')
         
         flash('Acesso restrito para administradores!')
         return redirect(url_for('login_page'))
 
-    #Busca todos os utilizadores para listar na tabela
     usuarios = Usuario.query.all()
     return render_template('admin.html', usuarios=usuarios)
-    
-    #return "<h1>Painel do Administrador</h1><a href='/calculadora'>Voltar</a>"
 
     
 if __name__ == '__main__':
-    app.run(debug=True) #APOS FINALIZAÇÃO DO PROJETO MUDE O DEBUG PARA False ##############
+    # O debug local continua funcionando ao rodar python main.py
+    app.run(debug=True)
